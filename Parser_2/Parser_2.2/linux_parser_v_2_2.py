@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import os
@@ -728,7 +727,7 @@ def main(es,variables,comp_variables):
             host     = st.text_input('Host ID  : ')
             username = st.text_input('username : ')
             password = st.text_input('Password : ')
-            #password = st.text_input("Enter Password:", type="password")
+           #password = st.text_input("Enter Password:", type="password")
             folder_path = st.text_input('Enter the folder path containing .log or .zip files:')
 
 #            print('user name=',username)
