@@ -488,7 +488,7 @@ def find_dmesg_folder_and_parse_logs(root_path, failure_keywords, affirmative_ke
     #if ((flag==FLAG_DPMO and 'dmesg' in root_path.lower()) or flag==FLAG_DPMT):
     #if ((flag==FLAG_DPMO and 'dpmo' in root_path.lower() and ('dmesg' in root_path.lower() or 'syslog' in root_path.lower())) or flag==FLAG_DPMT):
     #if ((flag==FLAG_DPMO and 'dpmo' in root_path.lower() and ('dmesg' in root_path.lower() or 'syslog' in root_path.lower())) or flag==FLAG_DPMT):
-    if(flag_all == 1):
+    if(flag_all == 1 and 'results' not in root_path):
         dmesg_path = root_path
         parent_folder = os.path.basename(os.path.dirname(dmesg_path))  # Get parent folder for unique log identification        
         for log_file in os.listdir(dmesg_path):
@@ -578,25 +578,46 @@ def find_dmesg_folder_and_parse_logs_from_server(host, username, password, root_
     #if ((flag==FLAG_DPMO and 'dmesg' in root_path.lower()) or flag==FLAG_DPMT):
     #if ((flag==FLAG_DPMO and 'dpmo' in root_path.lower() and ('dmesg' in root_path.lower() or 'syslog' in root_path.lower())) or flag==FLAG_DPMT):
     #if ((flag==FLAG_DPMO and 'dpmo' in root_path.lower() and ('dmesg' in root_path.lower() or 'syslog' in root_path.lower())) or flag==FLAG_DPMT):
-    if(flag_all == 1):
+   # if(flag_all == 1 and 'results' not in root_path):
+    if(('dmesg' in root_path or 'syslog' in root_path) and 'results' not in root_path):    
         dmesg_path = root_path
-        parent_folder = os.path.basename(os.path.dirname(dmesg_path))  # Get parent folder for unique log identification        
-        for log_file in os.listdir(dmesg_path):
-            log_file_path = os.path.join(dmesg_path, log_file)
-            if log_file.endswith('.log'):
-                try:
-                    #with open(log_file_path, 'r') as file:
-                    #    lines = file.readlines()
-                    with open(log_file_path,encoding="utf8") as file:
-                        lines = file.readlines()
-                        stats_df.loc[0,'Total Log Lines: '] = stats_df.loc[0,'Total Log Lines: ']+len(lines)
+        parent_folder = os.path.basename(os.path.dirname(dmesg_path))  # Get parent folder for unique log identification
+        [channel,client] = remote_connection(host, username, password)
+        folders = get_folder_from_server(channel,client,dmesg_path)
+        
+#        for log_file in os.listdir(dmesg_path):
+        for r in range(0,len(folders)):
+            if(folders[r][slice(-3,None)]== "log"):
+                [log_file, log_file_path] = '/'.join(folders[r].split('/')[:-1]), folders[r].split('/')[-1]
+                [channel,client] = remote_connection(host, username, password)
+                channel.exec_command("cat " + folders[r])
+                s = ""
+                while (True):
+                  rl, wl, xl = select.select([channel],[],[],0.0)
+                  if len(rl) > 0:
+                  # Must be stdout
+                      tempdata = channel.recv(8192)   
+                      newData = tempdata.decode().rstrip()
+                      s = s+newData
+                      if not tempdata:
+                        break
+                lines = s.split("\n")
 
-                except Exception as e:
-                    if(STREAMLIT==1):
-                        st.error(f"Error reading {log_file}: {e}")
-                    else:
-                        print(f"Error reading {log_file}: {e}")
-                    continue
+#            log_file_path = os.path.join(dmesg_path, log_file)
+#            if log_file.endswith('.log'):
+#                try:
+#                    #with open(log_file_path, 'r') as file:
+#                    #    lines = file.readlines()
+#                    with open(log_file_path,encoding="utf8") as file:
+#                        lines = file.readlines()
+#                        stats_df.loc[0,'Total Log Lines: '] = stats_df.loc[0,'Total Log Lines: ']+len(lines)
+
+#               except Exception as e:
+#                    if(STREAMLIT==1):
+#                        st.error(f"Error reading {log_file}: {e}")
+#                    else:
+#                        print(f"Error reading {log_file}: {e}")
+#                    continue
                 #print('log_file_path =',log_file_path)
                 if('dmesg' in root_path.lower()):
                     log_lines_dmesg=log_lines_dmesg+len(lines)
@@ -686,9 +707,9 @@ def main(es,variables,comp_variables):
 
     # Streamlit App
     if(STREAMLIT==1):
-        st.title("Linux Parser V2.1")
+        st.title("Linux Parser V2.2")
     else:
-        print("Linux Parser V2.1")
+        print("Linux Parser V2.2")
     # File uploader to select the folder containing .log or .zip files
     if(STREAMLIT==1):
         local = 'Local M/C'
@@ -699,11 +720,11 @@ def main(es,variables,comp_variables):
             folder_path = st.text_input('Enter the folder path containing .log or .zip files:')
         if(option==remote):
             flag_server=1
-            host     = st.text_input('Host ID  : ')
-            username = st.text_input('username : ')
-            password = st.text_input('Password : ')
+            host     = '10.223.163.161'#st.text_input('Host ID  : ')
+            username = 'hanamantha1'#st.text_input('username : ')
+            password = 'Intel@123'#st.text_input('Password : ')
             #password = st.text_input("Enter Password:", type="password")
-            folder_path = st.text_input('Enter the folder path containing .log or .zip files:')
+            folder_path = '/home/hanamantha1/Suneetha/GNR_RVP1_unit_testing'#st.text_input('Enter the folder path containing .log or .zip files:')
 
 #            print('user name=',username)
 #            print('host=',host)
@@ -715,7 +736,7 @@ def main(es,variables,comp_variables):
         #folder_path="C://Users//goelvikx//Downloads//unit_testing_4"
         folder_path = "C://Users//goelvikx//OneDrive - Intel Corporation//Desktop//unit_testing_4"
     if folder_path:
-        if os.path.exists(folder_path):
+        if os.path.exists(folder_path) or flag_server==1:
             if(flag_folder_read==0):
                 flag_folder_read=1
                 if(STREAMLIT==1):
@@ -784,8 +805,13 @@ def main(es,variables,comp_variables):
                         if(STREAMLIT==0):
                             print(k)
                         if(flag>=1):
-                            all_data.extend(find_dmesg_folder_and_parse_logs(r, failure_keywords, affirmative_keywords,flag,es,variables,comp_variables))
+                            if(flag_server==0):
+                                all_data.extend(find_dmesg_folder_and_parse_logs(r, failure_keywords, affirmative_keywords,flag,es,variables,comp_variables))
+                            if(flag_server==1):
+                                all_data.extend(find_dmesg_folder_and_parse_logs_from_server(host, username, password, r, failure_keywords, affirmative_keywords,flag,es,variables,comp_variables))
+
                         r_cnt=r_cnt+1
+                    print("Done-5")
                     stats_df.loc[0,'DPMO Folders: '] = dpmo_folders
                     stats_df.loc[0,'DPMT Folders: '] = dpmt_folders
                     stats_df.loc[0,'DMESG Folders: '] = dmesg_folders
@@ -808,7 +834,7 @@ def main(es,variables,comp_variables):
                         
                     # Convert to DataFrame
                     df = pd.DataFrame(all_data)
-                    
+                    print("Done-1")
                     if not df.empty:
                         df_flag=1
                         # Second Frequency Analysis: Consolidated frequency of each unique sentence across all files
@@ -845,6 +871,7 @@ def main(es,variables,comp_variables):
 
                     # Save to CSV
                     flag_save=1
+                    print("Done-2")
                     #if((STREAMLIT==0 or st.button("Save to CSV"))):
                     if(flag_save and  not df.empty):
                         if(flag_server==0):
@@ -853,28 +880,36 @@ def main(es,variables,comp_variables):
                             temp_csv_file_ = folder_path + '//' + filename + '_temp_failures.xlsx'
                             csv_file_master = folder_path + '_delta_errors.csv'
                         if(flag_server==1):
-                            [channel,client] = remote_connection(host, username, password)
+                            #[channel,client] = remote_connection(host, username, password)
+                            print("Done-3") 
                             temp_path=os.getcwd()
                             print('temp_path=',temp_path)
                             filename = folder_path.split('/')[-1]
                             csv_file = temp_path +'/' + filename + '_failures.xlsx'                    
                             csv_file_master = temp_path +'/'+folder_path + '_delta_errors.csv'
+                            print("Done-4")      
                             
                         s1 = list(consolidated_freq_df['Unique Sentence'])
 
                         final_df = manage_df(df)
-                        [csv_files,start_indexes,end_indexes]=get_file_names(folder_path + '//' + filename + '_failures',len(final_df))
-                       
+                        if(flag_server==0):
+                            [csv_files,start_indexes,end_indexes]=get_file_names(folder_path + '//' + filename + '_failures',len(final_df))
+                        if(flag_server==1):
+                            temp_pth = os.getcwd()
+                            [csv_files,start_indexes,end_indexes]=get_file_names(temp_pth + '//' + filename + '_failures',len(final_df))
+                            
                         for file_index in range(0,len(csv_files)):
                             st.subheader("Saving output file: " + str(file_index+1) + "of " + str(len(csv_files)))
+                            print("Done-6")
                         #get_max_similarity(s1,es)
                             with pd.ExcelWriter(csv_files[file_index]) as writer:
+                                print("Done-7")
                                 #print(csv_files[file_index],writer)
                                 temp_df = consolidated_freq_df.drop('Frequency', axis=1)
                                 col = list(temp_df.columns)
                                 col[0]= 'Unique/Delta Errors'
                                 temp_df.columns = col
-                               
+                                
                                 temp_df = pd.DataFrame()#update_delta_error_file(temp_df,'')
                                 temp_df.to_excel(writer, sheet_name="unique_delta_errors", index=True)
                                 flag_delta_error=0
@@ -894,7 +929,7 @@ def main(es,variables,comp_variables):
                                     variables      = list(df_dpmo_mt['Variables'])
                                     comp_variables = list(df_dpmo_mt['Comp Variables'])
                                     es=error_string
-                                    
+                                print("Done-8")    
                                 # Save the log file-specific unique sentence frequency analysis to CSV
                                 final_df = manage_df(df)
                                 temp_df = final_df.drop('error type',axis=1)
@@ -925,7 +960,9 @@ def main(es,variables,comp_variables):
 
                                 c_df.to_excel(writer, sheet_name="unique_error_frequency", index=True)
                                 #stats_df=stats_df.transpose()
-                                stats_df.loc[0,'Percent Errors: '] = str(round((stats_df.loc[0,'Error Log Lines: ']*100)/stats_df.loc[0,'Total Log Lines: '],2))+"%"
+                                stats_df.loc[0,'Percent Errors: ']=0
+                                if(stats_df.loc[0,'Total Log Lines: ']>0):
+                                    stats_df.loc[0,'Percent Errors: '] = str(round((stats_df.loc[0,'Error Log Lines: ']*100)/stats_df.loc[0,'Total Log Lines: '],2))+"%"
                                 stats_df_temp=stats_df.drop(['DPMO Folders: ','DPMT Folders: ','DMESG Folders: ','SYSLOG Folders: ','Other Folders: '], axis=1)                                
                                 (stats_df_temp.transpose()).to_excel(writer, sheet_name="Stats", index=True)
                                                     
@@ -958,7 +995,7 @@ def main(es,variables,comp_variables):
                         else:
                             print(f"Data saved to '{csv_file}'")                   
 
-
+                        print("Done-8")
                         if(STREAMLIT==1 and flag_server==1):
                             file_name = os.path.basename(csv_file )  #eds_report.csv
                             file_path = os.path.dirname(csv_file )
