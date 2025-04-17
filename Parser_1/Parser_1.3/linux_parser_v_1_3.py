@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import os
@@ -12,6 +11,8 @@ import numpy as np
 import paramiko
 import select
 from paramiko import SSHClient, AutoAddPolicy
+import sys
+import re
 
 STREAMLIT=1
 
@@ -331,7 +332,13 @@ def clean_text(text):
     end_index = text.find(']')
     if end_index != -1:
         return text[end_index + 2:] if len(text) > end_index + 2 and text[end_index + 1] == ' ' else text[end_index + 1:]
-    #print(text)
+    pattern = r"^-?\d+\.\d+$"
+    l = list(text.split(" "))
+    text = ''
+    for r in l:
+        if(not re.match(pattern, r)):
+            text = text+r+ ' '
+    
     return text
 
 # Function to check if a line is a failure
@@ -480,7 +487,8 @@ def find_dmesg_folder_and_parse_logs_from_server(host, username, password, root_
                         
                         
                         #full_log_name = log_file_path#f"{parent_folder}/{log_file}"  # Prefix log with parent folder for unique naming
-                        full_log_name = f"{parent_folder}/{log_file}"  # Prefix log with parent folder for unique naming
+                        #full_log_name = f"{parent_folder}/{log_file}"  # Prefix log with parent folder for unique naming
+                        full_log_name = f"{log_file}"  # Prefix log with parent folder for unique naming
                         file_name=""
                         if(flag==1):
                             if("warmboot_logs" in log_file_path.lower()):
@@ -522,13 +530,17 @@ password=''
 def main(es,variables,comp_variables):
     flag_file_write=0
     flag_folder_read=0
-    flag_server = 0
+    global flag_server
     global username
     global host
     global password
+    global folder_path
+    global ver
+    
     # Streamlit App
     if(STREAMLIT==1):
         st.title("Linux Parser V1.3")
+        ver = 'v_1_3'
         #st.markdown("#### Version 1.0, 1.1 and 1.3: for old folder/file structure format")
         #st.markdown("#### Version 2.0, 2.1 and 2.2: for new folder/file structure format")
     else:
@@ -538,17 +550,17 @@ def main(es,variables,comp_variables):
 
         local = 'Local M/C'
         remote = 'Remorte Server'
-        option = st.radio('Select local or remote logs: ', [local,remote])
-        if(option==local):
-            flag_server=0
-            folder_path = st.text_input('Enter the folder path containing .log or .zip files:')
-        if(option==remote):
-            flag_server=1
-            host     = st.text_input('Host ID  : ')
-            username = st.text_input('username : ')
-            password = st.text_input('Password : ')
+#        option = st.radio('Select local or remote logs: ', [local,remote])
+#        if(option==local):
+#            flag_server=0
+#            folder_path = st.text_input('Enter the folder path containing .log or .zip files:')
+#        if(option==remote):
+#            flag_server=1
+#            host     = st.text_input('Host ID  : ')
+#            username = st.text_input('username : ')
+#            password = st.text_input('Password : ')
             #password = st.text_input("Enter Password:", type="password")
-            folder_path = st.text_input('Enter the folder path containing .log or .zip files:')
+#            folder_path = st.text_input('Enter the folder path containing .log or .zip files:')
 
 #            print('user name=',username)
 #            print('host=',host)
@@ -640,16 +652,16 @@ def main(es,variables,comp_variables):
                     print('flag_save = ',flag_save)
                     if(flag_server==0):
                         filename = os.path.basename(folder_path).split('/')[-1]
-                        csv_file = folder_path + '//' + filename + '_failures.xlsx'                    
-                        csv_file_master = folder_path + '_delta_errors.csv'
+                        csv_file = folder_path + '//' + filename + '_failures_'+ver+'.xlsx'                    
+                        csv_file_master = folder_path + '_delta_errors_'+ver+'.csv'
                         
                     if(flag_server==1):
                         [channel,client] = remote_connection(host, username, password)
                         temp_path=os.getcwd()
                         print('temp_path=',temp_path)
                         filename = folder_path.split('/')[-1]
-                        csv_file = temp_path +'/' + filename + '_failures.xlsx'                    
-                        csv_file_master = temp_path +'/'+folder_path + '_delta_errors.csv'
+                        csv_file = temp_path +'/' + filename + '_failures_'+ver+'.xlsx'                    
+                        csv_file_master = temp_path +'/'+folder_path + '_delta_errors_'+ver+'.csv'
                         
                     
 
@@ -770,5 +782,33 @@ def main(es,variables,comp_variables):
             st.write("Please enter a folder path to start parsing.")
         else:
             print("Please enter a folder path to start parsing.")    
+
+
+
+# total arguments
+n = len(sys.argv)
+print("Total arguments passed:", n)
+
+# Arguments passed
+print("\nName of Python script:", sys.argv[0])
+
+print("\nArguments passed:", end = " ")
+
+host = sys.argv[1]
+username = sys.argv[2]
+password = sys.argv[3]
+folder_path = sys.argv[4]
+flag_server = sys.argv[5]
+if(flag_server!='1'):
+    flag_server = 0
+else:
+    flag_server=1    
+    
+
+print('user name=',username)
+print('host=',host)
+print('pssword=',password)
+print('folder path = ',folder_path)
+print('flag_server = ',flag_server)
 
 main(error_string,variables,comp_variables)
