@@ -720,11 +720,16 @@ def main(es,variables,comp_variables):
             folder_path = st.text_input('Enter the folder path containing .log or .zip files:')
         if(option==remote):
             flag_server=1
-            host     = '10.223.163.161'#st.text_input('Host ID  : ')
-            username = 'hanamantha1'#st.text_input('username : ')
-            password = 'Intel@123'#st.text_input('Password : ')
+#            host     = '10.223.163.161'
+#            username = 'hanamantha1'
+#            password = 'Intel@123'
+#            folder_path = '/home/hanamantha1/Suneetha/GNR_RVP1_unit_testing'
+
+            host     = st.text_input('Host ID  : ')
+            username = st.text_input('username : ')
+            password = st.text_input('Password : ')
             #password = st.text_input("Enter Password:", type="password")
-            folder_path = '/home/hanamantha1/Suneetha/GNR_RVP1_unit_testing'#st.text_input('Enter the folder path containing .log or .zip files:')
+            folder_path = st.text_input('Enter the folder path containing .log or .zip files:')
 
 #            print('user name=',username)
 #            print('host=',host)
