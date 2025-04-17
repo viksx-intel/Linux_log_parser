@@ -14,6 +14,7 @@ import re
 import paramiko
 import select
 from paramiko import SSHClient, AutoAddPolicy
+import sys
 
 STREAMLIT=1
 
@@ -391,10 +392,24 @@ def manage_df(df):
     return(temp_df)
 
 # Function to clean the text
+def clean_text_old(text):
+    end_index = text.find(']')
+    if end_index != -1:
+        return text[end_index + 2:] if len(text) > end_index + 2 and text[end_index + 1] == ' ' else text[end_index + 1:]
+    return text
+
+
+# Function to clean the text
 def clean_text(text):
     end_index = text.find(']')
     if end_index != -1:
         return text[end_index + 2:] if len(text) > end_index + 2 and text[end_index + 1] == ' ' else text[end_index + 1:]
+    pattern = r"^-?\d+\.\d+$"
+    l = list(text.split(" "))
+    text = ''
+    for r in l:
+        if(not re.match(pattern, r)):
+            text = text+r+ ' '
     return text
 
 # Function to check if a line is a failure
@@ -642,7 +657,8 @@ def find_dmesg_folder_and_parse_logs_from_server(host, username, password, root_
                     if is_failure:
                         stats_df.loc[0,'Error Log Lines: '] = stats_df.loc[0,'Error Log Lines: '] + 1
                         cleaned_text = clean_text(line.strip())
-                        full_log_name = f"{parent_folder}/{log_file}"  # Prefix log with parent folder for unique naming
+                        #full_log_name = f"{parent_folder}/{log_file}"  # Prefix log with parent folder for unique naming
+                        full_log_name = f"{log_file}"  # Prefix log with parent folder for unique naming
                         file_name=""
                         if(flag==FLAG_DPMT):
                             file_name = log_file_path.split(os.path.sep)[-3]
@@ -699,36 +715,40 @@ def main(es,variables,comp_variables):
     flag_folder_read=0
     temp_flag=1
     df_flag=0
-    flag_server = 0
+    global flag_server
     global username
     global host
     global password
+    global folder_path
+    global ver
 
     # Streamlit App
     if(STREAMLIT==1):
         st.title("Linux Parser V2.2")
+        ver = 'v_2_2'
     else:
         print("Linux Parser V2.2")
+        ver='v_2_2'
     # File uploader to select the folder containing .log or .zip files
     if(STREAMLIT==1):
         local = 'Local M/C'
         remote = 'Remorte Server'
-        option = st.radio('Select local or remote logs: ', [local,remote])
-        if(option==local):
-            flag_server=0
-            folder_path = st.text_input('Enter the folder path containing .log or .zip files:')
-        if(option==remote):
-            flag_server=1
+#        option = st.radio('Select local or remote logs: ', [local,remote])
+#        if(option==local):
+#            flag_server=0
+#            folder_path = st.text_input('Enter the folder path containing .log or .zip files:')
+#        if(option==remote):
+#            flag_server=1
 #            host     = '10.223.163.161'
 #            username = 'hanamantha1'
 #            password = 'Intel@123'
 #            folder_path = '/home/hanamantha1/Suneetha/GNR_RVP1_unit_testing'
 
-            host     = st.text_input('Host ID  : ')
-            username = st.text_input('username : ')
-            password = st.text_input('Password : ')
+#            host     = st.text_input('Host ID  : ')
+#            username = st.text_input('username : ')
+#            password = st.text_input('Password : ')
            #password = st.text_input("Enter Password:", type="password")
-            folder_path = st.text_input('Enter the folder path containing .log or .zip files:')
+#            folder_path = st.text_input('Enter the folder path containing .log or .zip files:')
 
 #            print('user name=',username)
 #            print('host=',host)
@@ -880,27 +900,27 @@ def main(es,variables,comp_variables):
                     if(flag_save and  not df.empty):
                         if(flag_server==0):
                             filename = os.path.basename(folder_path).split('/')[-1]                            
-                            csv_file = folder_path + '//' + filename + '_failures.xlsx'                             
-                            temp_csv_file_ = folder_path + '//' + filename + '_temp_failures.xlsx'
-                            csv_file_master = folder_path + '_delta_errors.csv'
+                            csv_file = folder_path + '//' + filename + '_failures_'+ver+'.xlsx'                             
+                            temp_csv_file_ = folder_path + '//' + filename + '_temp_failures_'+ver+'.xlsx'
+                            csv_file_master = folder_path + '_delta_errors_'+ver+'.csv'
                         if(flag_server==1):
                             #[channel,client] = remote_connection(host, username, password)
                             print("Done-3") 
                             temp_path=os.getcwd()
                             print('temp_path=',temp_path)
                             filename = folder_path.split('/')[-1]
-                            csv_file = temp_path +'/' + filename + '_failures.xlsx'                    
-                            csv_file_master = temp_path +'/'+folder_path + '_delta_errors.csv'
+                            csv_file = temp_path +'/' + filename + '_failures_'+ver+'.xlsx'                    
+                            csv_file_master = temp_path +'/'+folder_path + '_delta_errors_'+ver+'.csv'
                             print("Done-4")      
                             
                         s1 = list(consolidated_freq_df['Unique Sentence'])
 
                         final_df = manage_df(df)
                         if(flag_server==0):
-                            [csv_files,start_indexes,end_indexes]=get_file_names(folder_path + '//' + filename + '_failures',len(final_df))
+                            [csv_files,start_indexes,end_indexes]=get_file_names(folder_path + '//' + filename + '_failures_'+ver,len(final_df))
                         if(flag_server==1):
                             temp_pth = os.getcwd()
-                            [csv_files,start_indexes,end_indexes]=get_file_names(temp_pth + '//' + filename + '_failures',len(final_df))
+                            [csv_files,start_indexes,end_indexes]=get_file_names(temp_pth + '//' + filename + '_failures_'+ver,len(final_df))
                             
                         for file_index in range(0,len(csv_files)):
                             st.subheader("Saving output file: " + str(file_index+1) + "of " + str(len(csv_files)))
@@ -1035,5 +1055,31 @@ def main(es,variables,comp_variables):
         else:
             print("Please enter a folder path to start parsing.")    
 
+
+# total arguments
+n = len(sys.argv)
+print("Total arguments passed:", n)
+
+# Arguments passed
+print("\nName of Python script:", sys.argv[0])
+
+print("\nArguments passed:", end = " ")
+
+host = sys.argv[1]
+username = sys.argv[2]
+password = sys.argv[3]
+folder_path = sys.argv[4]
+flag_server = sys.argv[5]
+if(flag_server!='1'):
+    flag_server = 0
+else:
+    flag_server=1    
+    
+print('user name=',username)
+print('host=',host)
+print('pssword=',password)
+print('folder path = ',folder_path)
+print('flag_server = ',flag_server)
+    
 main(error_string,variables,comp_variables)
 
