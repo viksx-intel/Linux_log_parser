@@ -103,15 +103,31 @@ append_df = pd.DataFrame(columns = df_dpmo_mt.columns)
 
 ######################################### Server Functions ##################################################
 
-def get_folder_from_server(channel,client,path):
+def get_folder_from_server(client,channel,path):
+  transport = client.get_transport()
+  channel = transport.open_session()
   temp_path = 'find ' + path + ' "*"'
+  print('temp_path=',temp_path)
   stdin, stdout, stderr = client.exec_command(temp_path)
   folders=[]
   for line in stdout:
       temp = line.strip('\n')
       folder, name = '/'.join(temp.split('/')[:-1]), temp.split('/')[-1]
-      #print(temp)
-      #print('folder=',folder,'and file=',name,'\n')
+      folders.append(temp)
+  return(folders) 
+
+def get_folder_from_server_1(host,username,password,path):
+  temp_path = 'find ' + path + ' "*"'
+  print('temp_path=',temp_path)
+
+  client = paramiko.client.SSHClient()
+  client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+  client.connect(hostname=host, username=username, password=password)   
+  stdin, stdout, stderr = client.exec_command(temp_path)
+  folders=[]
+  for line in stdout:
+      temp = line.strip('\n')
+      folder, name = '/'.join(temp.split('/')[:-1]), temp.split('/')[-1]
       folders.append(temp)
   return(folders) 
 
@@ -119,7 +135,8 @@ def get_folder_from_server(channel,client,path):
 def remote_connection(host, username, password):
   client = paramiko.client.SSHClient()
   client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-  client.connect(host, username=username, password=password)
+  client.connect(hostname=host, port=22, username=username, password=password,timeout=10)
+  
   transport = client.get_transport()
   channel = transport.open_session()
   return(channel,client)
@@ -393,16 +410,73 @@ def unzip_files(folder_path):
                     print(f"Error unzipping file: {file_name}")
     return unzipped_paths
 
+
+def remove_folder_recursive(sftp, path):
+    print('path=',path)
+    for entry in sftp.listdir(path):
+        print('entry=',entry)
+        full_path = path+"/"+entry#os.path.join(path, entry)
+        print('full_path=',full_path)
+        if stat := sftp.stat(full_path):
+            if stat.st_mode & 0o40000:  # Check if it's a directory
+                remove_folder_recursive(sftp, full_path)
+            else:
+                sftp.remove(full_path)
+    sftp.rmdir(path)
+
+
+def unzip_files_on_server(client,channel,folder_path):
+    sftp = client.open_sftp()
+    folders=get_folder_from_server(client,channel,folder_path)
+    unzipped_paths = []
+    for r in range(0,len(folders)):
+      file_name = folders[r]
+      if file_name.endswith('.zip'):
+            file_path = os.path.join(folder_path, file_name)
+            try:
+                extracted_path = file_path.replace(".zip","")              
+                folder_exists=0
+
+                try:
+                    sftp.stat(extracted_path)
+                    folder_exists = 1
+                except IOError as e:
+                    if e.errno == 2: #errno 2 refers to 'No such file or directory'
+                        folder_exists = 0
+
+                if(folder_exists):
+                  remove_folder_recursive(sftp, extracted_path)
+                
+                command = f"unzip {file_path} -d {os.path.dirname(extracted_path)}"
+                stdin, stdout, stderr = client.exec_command(command)
+                exit_status = stdout.channel.recv_exit_status()
+                if exit_status == 0:
+                    print(f"Successfully extracted '{folder_path}' to '{extracted_path}'.")
+                    unzipped_paths.append(extracted_path)
+                else:
+                     error_output = stderr.read().decode('utf-8')
+                     print(f"Error unzipping: {error_output}")
+            except paramiko.AuthenticationException:
+                print("Authentication failed, please verify your credentials.")
+            except paramiko.SSHException as ssh_exc:
+                 print(f"SSH connection failed: {ssh_exc}")
+            except Exception as e:
+                print(f"An error occurred: {e}")      
+    return unzipped_paths
+
+
 # Function to find 'dmesg' folder and process logs, adding parent directory for unique identification
 # Function to find 'dmesg' folder and process logs, adding parent directory for unique identification
 def find_dmesg_folder_and_parse_logs(root_path, failure_keywords, affirmative_keywords,flag,error_string,variables,comp_variables):
     data = []
-    if ('dmesg' in root_path or 'syslog' in root_path) and 'results' not in root_path:
+    flag_all=1
+    if(flag_all == 1 and 'results' not in root_path):
+    #if ('dmesg' in root_path or 'syslog' in root_path) and 'results' not in root_path:
         dmesg_path = root_path#os.path.join(root_path, 'dmesg')
         parent_folder = os.path.basename(os.path.dirname(dmesg_path))  # Get parent folder for unique log identification        
         for log_file in os.listdir(dmesg_path):
             log_file_path = os.path.join(dmesg_path, log_file)
-            if log_file.endswith('.log'):
+            if (log_file.endswith('.log' ) and  "results" not in log_file):
                 try:
                     with open(log_file_path, 'r') as file:
                         lines = file.readlines()
@@ -448,21 +522,27 @@ def find_dmesg_folder_and_parse_logs(root_path, failure_keywords, affirmative_ke
 
     return data
 
-def find_dmesg_folder_and_parse_logs_from_server(host, username, password, root_path, failure_keywords, affirmative_keywords,flag,error_string,variables,comp_variables):
+#def find_dmesg_folder_and_parse_logs_from_server(host, username, password, root_path, failure_keywords, affirmative_keywords,flag,error_string,variables,comp_variables):
+def find_dmesg_folder_and_parse_logs_from_server(client,channel, root_path, failure_keywords, affirmative_keywords,flag,error_string,variables,comp_variables):
     data = []
+    flag_all=1
     print('\nroot path=',root_path)
 #    [channel,client] = remote_connection(host, username, password)
     #channel.exec_command("cat " + folders[r])
-    if ('dmesg' in root_path or 'syslog' in root_path) and 'results' not in root_path:
+    if(flag_all == 1 and 'results' not in root_path):
+#    if ('dmesg' in root_path or 'syslog' in root_path) and 'results' not in root_path:
         dmesg_path = root_path#os.path.join(root_path, 'dmesg')
         
-        [channel,client] = remote_connection(host, username, password)
-        folders = get_folder_from_server(channel,client,dmesg_path)
+        #[channel,client] = remote_connection(host, username, password)
+        transport = client.get_transport()
+        channel = transport.open_session()
+        folders = get_folder_from_server(client,channel,dmesg_path)
         #print('dmesg=',dmesg_path,'\n','folders=',folders,'\n')
         for r in range(0,len(folders)):
-            if(folders[r][slice(-3,None)]== "log"):
+            if(folders[r][slice(-3,None)]== "log" and "results" not in folders[r]):
                 [log_file, log_file_path] = '/'.join(folders[r].split('/')[:-1]), folders[r].split('/')[-1]
-                [channel,client] = remote_connection(host, username, password)
+                #[channel,client] = remote_connection(host, username, password)
+                channel = transport.open_session()
                 channel.exec_command("cat " + folders[r])
                 s = ""
                 while (True):
@@ -590,8 +670,12 @@ def main(es,variables,comp_variables):
                 if(flag_server==1):
 
                     [channel,client] = remote_connection(host, username, password)
-                    folders = get_folder_from_server(channel,client,folder_path)
-
+                    folders = get_folder_from_server(client,channel,folder_path)
+                    unzipped_paths = unzip_files_on_server(client,channel,folder_path)
+                    for r in folders:
+                        unzipped_paths.append(unzip_files_on_server(client,channel,r))
+                    folders = get_folder_from_server(client,channel,folder_path)
+                    
                 # Parse the unzipped folders and log files
                 all_data = []
                 for r in folders:
@@ -605,7 +689,7 @@ def main(es,variables,comp_variables):
                     if(flag_server==0):
                         all_data.extend(find_dmesg_folder_and_parse_logs(r, failure_keywords, affirmative_keywords,flag,es,variables,comp_variables))
                     if(flag_server==1):
-                        all_data.extend(find_dmesg_folder_and_parse_logs_from_server(host, username, password, r, failure_keywords, affirmative_keywords,flag,es,variables,comp_variables))
+                        all_data.extend(find_dmesg_folder_and_parse_logs_from_server(client, channel, r, failure_keywords, affirmative_keywords,flag,es,variables,comp_variables))
 
                 # Convert to DataFrame
                 
@@ -787,12 +871,12 @@ def main(es,variables,comp_variables):
 
 # total arguments
 n = len(sys.argv)
-print("Total arguments passed:", n)
+#print("Total arguments passed:", n)
 
 # Arguments passed
-print("\nName of Python script:", sys.argv[0])
+#print("\nName of Python script:", sys.argv[0])
 
-print("\nArguments passed:", end = " ")
+#print("\nArguments passed:", end = " ")
 
 host = sys.argv[1]
 username = sys.argv[2]
@@ -803,12 +887,12 @@ if(flag_server!='1'):
     flag_server = 0
 else:
     flag_server=1    
-    
+folder_path = sys.argv[4].replace("%20", " ")    
 
-print('user name=',username)
-print('host=',host)
-print('pssword=',password)
-print('folder path = ',folder_path)
-print('flag_server = ',flag_server)
+#print('user name=',username)
+#print('host=',host)
+#print('pssword=',password)
+#print('folder path = ',folder_path)
+#print('flag_server = ',flag_server)
 
 main(error_string,variables,comp_variables)
