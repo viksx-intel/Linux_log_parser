@@ -164,7 +164,20 @@ append_df = pd.DataFrame(columns = df_dpmo_mt.columns)
 
 ######################################### Server Functions ##################################################
 
-def get_folder_from_server(channel,client,path):
+def get_folder_from_server(client,channel,path):
+#  transport = client.get_transport()
+#  channel = transport.open_session()
+  temp_path = 'find ' + path + ' "*"'
+  print('temp_path=',temp_path)
+  stdin, stdout, stderr = client.exec_command(temp_path)
+  folders=[]
+  for line in stdout:
+      temp = line.strip('\n')
+      folder, name = '/'.join(temp.split('/')[:-1]), temp.split('/')[-1]
+      folders.append(temp)
+  return(folders)
+
+def get_folder_from_server_1(client,channel,path):
   temp_path = 'find ' + path + ' "*"'
   stdin, stdout, stderr = client.exec_command(temp_path)
   folders=[]
@@ -180,7 +193,7 @@ def get_folder_from_server(channel,client,path):
 def remote_connection(host, username, password):
   client = paramiko.client.SSHClient()
   client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-  client.connect(host, username=username, password=password)
+  client.connect(hostname=host, port=22, username=username, password=password,timeout=10)
   transport = client.get_transport()
   channel = transport.open_session()
   return(channel,client)
@@ -401,15 +414,16 @@ def clean_text_old(text):
 
 # Function to clean the text
 def clean_text(text):
-    end_index = text.find(']')
-    if end_index != -1:
-        return text[end_index + 2:] if len(text) > end_index + 2 and text[end_index + 1] == ' ' else text[end_index + 1:]
-    pattern = r"^-?\d+\.\d+$"
+    pattern = r"-?\d+(\.\d{1,7})?"
     l = list(text.split(" "))
-    text = ''
+    temp = ''
     for r in l:
         if(not re.match(pattern, r)):
-            text = text+r+ ' '
+            temp = temp+r+ ' '
+    text = temp
+    end_index = text.find(']')
+    if end_index != -1:
+        return text[end_index + 2:] if len(text) > end_index + 2 and text[end_index + 1] == ' ' else text[end_index + 1:]   
     return text
 
 # Function to check if a line is a failure
@@ -459,6 +473,59 @@ def compress(path,file_names):
         zf.close()
     return(f)
 
+def remove_folder_recursive(sftp, path):
+    print('path=',path)
+    for entry in sftp.listdir(path):
+        print('entry=',entry)
+        full_path = path+"/"+entry#os.path.join(path, entry)
+        print('full_path=',full_path)
+        if stat := sftp.stat(full_path):
+            if stat.st_mode & 0o40000:  # Check if it's a directory
+                remove_folder_recursive(sftp, full_path)
+            else:
+                sftp.remove(full_path)
+    sftp.rmdir(path)
+
+
+def unzip_files_on_server(client,channel,folder_path):
+    sftp = client.open_sftp()
+    folders=get_folder_from_server(client,channel,folder_path)
+    unzipped_paths = []
+    for r in range(0,len(folders)):
+      file_name = folders[r]
+      if file_name.endswith('.zip'):
+            file_path = os.path.join(folder_path, file_name)
+            try:
+                extracted_path = file_path.replace(".zip","")              
+                folder_exists=0
+
+                try:
+                    sftp.stat(extracted_path)
+                    folder_exists = 1
+                except IOError as e:
+                    if e.errno == 2: #errno 2 refers to 'No such file or directory'
+                        folder_exists = 0
+
+                if(folder_exists):
+                  remove_folder_recursive(sftp, extracted_path)
+                
+                command = f"unzip {file_path} -d {os.path.dirname(extracted_path)}"
+                stdin, stdout, stderr = client.exec_command(command)
+                exit_status = stdout.channel.recv_exit_status()
+                if exit_status == 0:
+                    print(f"Successfully extracted '{folder_path}' to '{extracted_path}'.")
+                    unzipped_paths.append(extracted_path)
+                else:
+                     error_output = stderr.read().decode('utf-8')
+                     print(f"Error unzipping: {error_output}")
+            except paramiko.AuthenticationException:
+                print("Authentication failed, please verify your credentials.")
+            except paramiko.SSHException as ssh_exc:
+                 print(f"SSH connection failed: {ssh_exc}")
+            except Exception as e:
+                print(f"An error occurred: {e}")      
+    return unzipped_paths
+
 
 # Function to unzip all files in the folder
 def unzip_files(folder_path):
@@ -503,11 +570,12 @@ def find_dmesg_folder_and_parse_logs(root_path, failure_keywords, affirmative_ke
     #if ((flag==FLAG_DPMO and 'dpmo' in root_path.lower() and ('dmesg' in root_path.lower() or 'syslog' in root_path.lower())) or flag==FLAG_DPMT):
     #if ((flag==FLAG_DPMO and 'dpmo' in root_path.lower() and ('dmesg' in root_path.lower() or 'syslog' in root_path.lower())) or flag==FLAG_DPMT):
     if(flag_all == 1 and 'results' not in root_path):
+    #if ('dmesg' in root_path or 'syslog' in root_path) and 'results' not in root_path:    
         dmesg_path = root_path
         parent_folder = os.path.basename(os.path.dirname(dmesg_path))  # Get parent folder for unique log identification        
         for log_file in os.listdir(dmesg_path):
             log_file_path = os.path.join(dmesg_path, log_file)
-            if log_file.endswith('.log'):
+            if log_file.endswith('.log') and 'results' not in log_file:
                 try:
                     #with open(log_file_path, 'r') as file:
                     #    lines = file.readlines()
@@ -538,8 +606,8 @@ def find_dmesg_folder_and_parse_logs(root_path, failure_keywords, affirmative_ke
                     print(logs_name_parts)#,'\tlogs_name_parts[-2]=',logs_name_parts[-2])
                     setup_id = logs_name_parts[-2] if len(logs_name_parts) > 1 else "not found"
                     test_cycle_id = logs_name_parts[-1] if len(logs_name_parts) > 1 else "not found"
-                    print('setup_id=',setup_id)
-                    print('test_cycle_id=',test_cycle_id)
+                    #print('setup_id=',setup_id)
+                    #print('test_cycle_id=',test_cycle_id)
                  
                 for line in lines:
                     is_failure, key_issue = check_failure(line, failure_keywords, affirmative_keywords)
@@ -576,7 +644,7 @@ def find_dmesg_folder_and_parse_logs(root_path, failure_keywords, affirmative_ke
 
 
 
-def find_dmesg_folder_and_parse_logs_from_server(host, username, password, root_path, failure_keywords, affirmative_keywords,flag,error_string,variables,comp_variables):
+def find_dmesg_folder_and_parse_logs_from_server(client,channel, root_path, failure_keywords, affirmative_keywords,flag,error_string,variables,comp_variables):
     global log_lines_dmesg
     global log_lines_syslog
     global log_lines_dpmt
@@ -592,18 +660,21 @@ def find_dmesg_folder_and_parse_logs_from_server(host, username, password, root_
     #if ((flag==FLAG_DPMO and 'dmesg' in root_path.lower()) or flag==FLAG_DPMT):
     #if ((flag==FLAG_DPMO and 'dpmo' in root_path.lower() and ('dmesg' in root_path.lower() or 'syslog' in root_path.lower())) or flag==FLAG_DPMT):
     #if ((flag==FLAG_DPMO and 'dpmo' in root_path.lower() and ('dmesg' in root_path.lower() or 'syslog' in root_path.lower())) or flag==FLAG_DPMT):
-   # if(flag_all == 1 and 'results' not in root_path):
-    if(('dmesg' in root_path or 'syslog' in root_path) and 'results' not in root_path):    
+    if(flag_all == 1 and 'results' not in root_path):
+    #if(('dmesg' in root_path or 'syslog' in root_path) and 'results' not in root_path):    
         dmesg_path = root_path
         parent_folder = os.path.basename(os.path.dirname(dmesg_path))  # Get parent folder for unique log identification
-        [channel,client] = remote_connection(host, username, password)
-        folders = get_folder_from_server(channel,client,dmesg_path)
+        transport = client.get_transport()
+        channel = transport.open_session()
+        folders = get_folder_from_server(client,channel,dmesg_path)
         
 #        for log_file in os.listdir(dmesg_path):
         for r in range(0,len(folders)):
-            if(folders[r][slice(-3,None)]== "log"):
+            #print('folders[r]=',folders[r])
+            if(folders[r][slice(-3,None)]== "log" and 'results' not in folders[r]):
                 [log_file, log_file_path] = '/'.join(folders[r].split('/')[:-1]), folders[r].split('/')[-1]
-                [channel,client] = remote_connection(host, username, password)
+                
+                channel = transport.open_session()
                 channel.exec_command("cat " + folders[r])
                 s = ""
                 while (True):
@@ -616,6 +687,7 @@ def find_dmesg_folder_and_parse_logs_from_server(host, username, password, root_
                       if not tempdata:
                         break
                 lines = s.split("\n")
+                
 
 #            log_file_path = os.path.join(dmesg_path, log_file)
 #            if log_file.endswith('.log'):
@@ -646,11 +718,11 @@ def find_dmesg_folder_and_parse_logs_from_server(host, username, password, root_
 #C:\Users\goelvikx\Downloads                   \Suneetha\GNR_RVP1       \DPMO\S4_Logs      \ST1_S4_logs             \S4_Logs_030425-175530      \dmesg
                 if(VERSION==2):
                     logs_name_parts = os.path.splitext(log_file)[0].split('_')
-                    print(logs_name_parts)#,'\tlogs_name_parts[-2]=',logs_name_parts[-2])
+                    #print(logs_name_parts)#,'\tlogs_name_parts[-2]=',logs_name_parts[-2])
                     setup_id = logs_name_parts[-2] if len(logs_name_parts) > 1 else "not found"
                     test_cycle_id = logs_name_parts[-1] if len(logs_name_parts) > 1 else "not found"
-                    print('setup_id=',setup_id)
-                    print('test_cycle_id=',test_cycle_id)
+                    #print('setup_id=',setup_id)
+                    #print('test_cycle_id=',test_cycle_id)
                  
                 for line in lines:
                     is_failure, key_issue = check_failure(line, failure_keywords, affirmative_keywords)
@@ -760,7 +832,7 @@ def main(es,variables,comp_variables):
         #folder_path="C://Users//goelvikx//Downloads//unit_testing_4"
         folder_path = "C://Users//goelvikx//OneDrive - Intel Corporation//Desktop//unit_testing_4"
     if folder_path:
-        if os.path.exists(folder_path) or flag_server==1:
+        if (os.path.exists(folder_path) or flag_server==1):
             if(flag_folder_read==0):
                 flag_folder_read=1
                 if(STREAMLIT==1):
@@ -794,8 +866,15 @@ def main(es,variables,comp_variables):
                         #print('unzipped_paths=',unzipped_paths)
                         folders = get_folders(folder_path)
                     if(flag_server==1):
+
                         [channel,client] = remote_connection(host, username, password)
-                        folders = get_folder_from_server(channel,client,folder_path)
+                        folders = get_folder_from_server(client,channel,folder_path)
+                        unzipped_paths = unzip_files_on_server(client,channel,folder_path)
+                        for r in folders:
+                            unzipped_paths.append(unzip_files_on_server(client,channel,r))
+                        folders = get_folder_from_server(client,channel,folder_path)
+
+
 
                     
                     stats_df.loc[0,'Total Folders: '] = len(folders)
@@ -832,7 +911,7 @@ def main(es,variables,comp_variables):
                             if(flag_server==0):
                                 all_data.extend(find_dmesg_folder_and_parse_logs(r, failure_keywords, affirmative_keywords,flag,es,variables,comp_variables))
                             if(flag_server==1):
-                                all_data.extend(find_dmesg_folder_and_parse_logs_from_server(host, username, password, r, failure_keywords, affirmative_keywords,flag,es,variables,comp_variables))
+                                all_data.extend(find_dmesg_folder_and_parse_logs_from_server(client,channel, r, failure_keywords, affirmative_keywords,flag,es,variables,comp_variables))
 
                         r_cnt=r_cnt+1
                     print("Done-5")
@@ -1058,28 +1137,28 @@ def main(es,variables,comp_variables):
 
 # total arguments
 n = len(sys.argv)
-print("Total arguments passed:", n)
+#print("Total arguments passed:", n)
 
 # Arguments passed
-print("\nName of Python script:", sys.argv[0])
+#print("\nName of Python script:", sys.argv[0])
 
-print("\nArguments passed:", end = " ")
+#print("\nArguments passed:", end = " ")
 
 host = sys.argv[1]
 username = sys.argv[2]
 password = sys.argv[3]
-folder_path = sys.argv[4]
+folder_path = sys.argv[4].replace("%20", " ")
 flag_server = sys.argv[5]
 if(flag_server!='1'):
     flag_server = 0
 else:
     flag_server=1    
     
-print('user name=',username)
-print('host=',host)
-print('pssword=',password)
-print('folder path = ',folder_path)
-print('flag_server = ',flag_server)
+#print('user name=',username)
+#print('host=',host)
+#print('pssword=',password)
+#print('folder path = ',folder_path)
+#print('flag_server = ',flag_server)
     
 main(error_string,variables,comp_variables)
 
